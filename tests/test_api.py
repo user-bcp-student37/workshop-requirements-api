@@ -51,6 +51,35 @@ def test_uploads_requirement(tmp_path: Path) -> None:
     assert (upload_dir / "requirements.txt").exists()
 
 
+def test_owner_filter_injection_returns_no_foreign_tasks(tmp_path: Path) -> None:
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = client.get("/api/tasks", params={"owner": "' OR '1'='1"}, headers=headers())
+        summary = client.get("/api/summary", params={"owner": "' OR '1'='1"}, headers=headers())
+    assert response.status_code == 200
+    assert response.json() == []
+    assert summary.status_code == 200
+    assert summary.json()["total"] == 0
+
+
+def test_task_values_are_stored_literally(tmp_path: Path) -> None:
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    hostile = "x'); DELETE FROM tasks; --"
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/tasks",
+            headers=headers(),
+            json={"title": "O'Brien", "description": hostile, "status": "TODO", "priority": "LOW"},
+        )
+        listed = client.get("/api/tasks", headers=headers())
+        summary = client.get("/api/summary", headers=headers())
+    assert created.status_code == 201
+    assert created.json()["title"] == "O'Brien"
+    assert created.json()["description"] == hostile
+    assert summary.json()["total"] == 3
+    assert any(task["description"] == hostile for task in listed.json())
+
+
 def test_rejects_invalid_token(tmp_path: Path) -> None:
     app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
     with TestClient(app) as client:
